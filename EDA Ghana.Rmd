@@ -1,0 +1,133 @@
+---
+title: "Ghana birthweight: Exploratory"
+author: "Barbara E. Mottey"
+date: "10/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggmosaic)
+library(GGally)
+library(forcats)
+```
+
+## Load data
+
+```{r}
+dhs <- readRDS("new_dhs.rds")
+
+gh_data<- dhs %>% select(-c("notes", "isoalpha2")) %>% filter(country.name=="Ghana")
+```
+
+##birth weight and fuel
+```{r}
+gh.data <- gh_data
+attach(gh.data)
+summary(c_weight) # 27,595 NAs Min is 800 and max is 9000
+table(fuel_bin) # 801 NAs
+
+```
+
+
+
+## birth weight distribution
+```{r}
+ggplot(gh.data, aes(c_weight))+geom_histogram(binwidth = 10.5, alpha = 1.0)+ ylim(0,4000)+stat_bin(bins= 100, na.rm = T) + xlab("birth weight")
+```
+
+
+## boxplots for each country for birth weight
+```{r}
+
+ggplot(gh.data , aes(y= c_weight)) +
+  geom_boxplot(fill = '#e5e5e5', outlier.shape = NA) +
+  ylab("birth weight") 
+```
+
+
+## boxplots for fuel types
+```{r}
+gh.data$fuel_bin[gh.data$fuel_bin == 2]<- NA
+gh.data$fuel_bin <- as.factor(gh.data$fuel_bin)
+
+ggplot(na.omit(gh.data), aes(x= fuel_bin, y= c_weight))+geom_boxplot(outlier.shape = NA)+ ylim(0,6000) + ylab("birth weight") + xlab("fuel type")+
+  scale_x_discrete(labels = c("0" = "Clean", "1"  = "Solid"))
+```
+
+People who use solid fuel tend to have lower birthweights comparatively.
+
+###fuel type  vs wealth
+```{r}
+gh.data$residence<- as.factor(gh.data$residence)
+gh.data$wealth <- as.factor(gh.data$wealth)
+
+ggplot(na.omit(gh.data)) + geom_mosaic(aes(product(wealth, fuel_bin), fill = wealth)) + facet_wrap(~residence, labeller=(as_labeller(c("1" = "urban", "2" = "rural")))) + ylab("wealth") + xlab("fuel (clean/solid)")
+
+ggplot(na.omit(gh.data)) + geom_mosaic(aes(product(residence, wealth), fill = residence)) +
+  facet_wrap(~fuel_bin, labeller=(as_labeller(c("0" = "Clean fuel", "1"  = "Solid fuel")))) +labs(x= "wealth", y = "residence", title = 'fuel type (clean/solid) used based on residence type and wealth')
+```
+#Facet by Residential
+Among urban residents, a higher proportion of those who use clean fuels are the rich people. About the 80% of those who use solid fuel are at least average people in terms of wealth.
+However among the rural residents, a larger proportion (about 90%) use solid fuel. Most of those who use sold fuel in the rural setting are poor where as those who use clean fuel (about 98%) have at least average wealth.
+
+#Facet by Fuel
+The higher the wealth index, the more likely the residence is urban for the clean fuel users.
+
+
+##Fuel vs education
+```{r}
+gh.data$education[gh.data$education %in% c(4:9)]<- NA
+gh.data$education <- as.factor(gh.data$education)
+
+ggplot(na.omit(gh.data)) + geom_mosaic(aes(product(education, fuel_bin), fill = education)) + labs(x= "fuel type", y = "education", title = 'fuel type (clean/solid) used based on level of education')
+```
+
+Most of the women that use clean fuel have a secondary education; same applies to those who use solid fuel. About 50% of those who use solid fuel have at most primary education.
+
+
+## fuel vs smoking
+```{r}
+gh.data$smoke <- as.factor(gh.data$smoke)
+
+ggplot(na.omit(gh.data)) + geom_mosaic(aes(product(smoke, fuel_bin), fill = smoke)) + labs(x= "fuel type", y = "smoking status", title = 'fuel type (clean/solid) used based on smoking status')
+```
+
+Smoking status would not be a covariate. Most women do not smoke.
+
+# USING max birthweight of 4500g
+##education vs birth weight
+```{r}
+is.na(gh.data$c_weight) <- which(gh.data$c_weight >= 4501)
+ggplot(na.omit(gh.data), aes(x= education, y= c_weight))+geom_boxplot(outlier.shape = NA)+ ylim(0,6000)+ ylab("birth weight")
+```
+
+Those with no education or primary education seem to have babies with a lower mean weight.
+
+
+##birth weight vs wealth
+```{r}
+ggplot(na.omit(gh.data), aes(x= wealth, y= c_weight))+geom_boxplot(outlier.shape = NA)+ ylim(0,6000)
+```
+
+The mean birth weight for each category seem to be lower for those who are poorest or poor.
+
+## birth weight vs residence
+```{r}
+ggplot(na.omit(gh.data), aes(x= residence, y= c_weight))+geom_boxplot(outlier.shape = NA)+ ylim(0,6000)
+```
+
+Average Birth weights for those in rural settings seem to be quite lower than those in the urban setting.
+
+
+## birth weight vs gender
+```{r}
+gh.data$gender <- as.factor(gh_data$gender)
+ggplot(na.omit(gh.data), aes(x= gender, y= c_weight))+geom_boxplot(outlier.shape = NA)+ ylim(0,6000)+ labs(x= "gender", y= "birth weight")
+```
+
+boys seem to have a higher average birth weight than girls
+
