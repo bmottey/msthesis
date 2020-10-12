@@ -1,0 +1,146 @@
+---
+title: "Models for Ghana"
+author: "Barbara E. Mottey"
+date: "10/12/2020"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggmosaic)
+library(GGally)
+library(forcats)
+#install.packages("lme4")
+library(lme4)
+library(pander)
+```
+
+```{r}
+newdata <- readRDS("modeldata.rds")
+newdata<- newdata %>% filter(country.name =="Ghana")
+attach(newdata)
+
+
+##binary birth weight
+newdata$bin_weight[newdata$c_weight %in% c(0:2499)]<- 0
+newdata$bin_weight[newdata$c_weight %in% c(2500:6000)]<- 1      
+
+#OR (10.17% are underweight)
+newdata$bin_weight2 <- ifelse(newdata$c_weight <2500,1,0) 
+
+##binary birth weight without 6000 (4.03% above 4500 n above)
+newdata$bin_weight[newdata$c_weight %in% c(0:2499)]<- 0
+newdata$bin_weight[newdata$c_weight %in% c(2500:4499)]<- 1      
+newdata$bin_weight[newdata$c_weight %in% c(4500:6000)]<- 2
+
+###marital status
+#newdata$marital_s[newdata$marital_s %in% c(0,3:5)]<- 0
+#newdata$marital_s[newdata$marital_s %in% c(1:2)]<- 1   
+
+newdata$marital_s<- ifelse(newdata$marital_s %in% c(1:2),1,0)
+```
+
+```{r}
+ggplot(newdata, aes(c_weight))+geom_histogram(binwidth = 10.5, alpha = 1.0)+ ylim(0,4000) + xlab("birth weight")
+```
+
+
+```{r}
+newdata$wealth <- as.factor(newdata$wealth)
+newdata$fuel_bin <- as.factor(newdata$fuel_bin)
+ggplot(na.omit(newdata))+ geom_boxplot(aes(wealth, c_weight, fill = fuel_bin, alpha = fuel_bin))+
+  labs(x = "wealth", y = "Birth weight", title = "birth weight vs wealth")+
+  scale_x_discrete(labels = c("1"= "Poorest", "2"= "Poor", "3" = "Middle", "4" = "Rich", "5" = "Richest"))+
+  scale_alpha_ordinal(name = "fuel type", labels = c("clean", "solid"))+
+  scale_fill_discrete(name = "fuel type", labels = c("clean", "solid"))
+```
+
+
+model 1
+```{r }
+#with this data, there is no info on the regions in ghana attached so i don't think the random effect factor will work in this case. 
+
+#old model fitted for all countries
+#mod3s <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|country.name)+(1|region),na.action=na.omit, data = newdata)
+
+
+#i will use residence type as random effect
+mod1 <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|residence),na.action=na.omit, data = newdata)
+
+
+c(summary(mod1)$coefficient[2,1:2], confint(mod1, method="Wald")[4,1:2],nobs(mod1),"birthweight",
+	paste0(round(summary(mod1)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod1, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod1, method="Wald")[4,1:2][2],2),")"))
+
+
+```
+
+with anemic
+```{r}
+mod_ane <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+as.factor(anemic)+(1|residence),na.action=na.omit, data = newdata)
+
+
+
+	paste0(round(summary(mod_ane)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_ane, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_ane, method="Wald")[4,1:2][2],2),")")
+```
+
+## using only documented weights
+```{r}
+doc_weight <- filter(newdata, document == 1)
+mod_doc <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|residence),na.action=na.omit, data = doc_weight)
+
+
+
+	paste0(round(summary(mod_doc)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_doc, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_doc, method="Wald")[4,1:2][2],2),")")
+
+
+##anemia
+mod_doc_a <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+as.factor(wealth)+as.factor(education)+as.factor(marital_s)+as.factor(anemic)+(1|residence),na.action=na.omit, data = doc_weight)
+
+
+	paste0(round(summary(mod_doc_a)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_doc_a, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_doc_a, method="Wald")[4,1:2][2],2),")")
+```
+
+
+
+
+##GLM 
+```{r}
+modglm <- glmer(bin_weight2~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|residence),na.action=na.omit, data = newdata, family = binomial(link = "logit"), 
+	control = glmerControl(optimizer = "bobyqa",nAGQ=9))
+
+
+	paste0(round(exp(summary(modglm)$coefficient[2,1:2][1]),2)," (",
+	round(exp(confint(modglm, method="Wald")[4,1:2][1]),2),", ",
+	round(exp(confint(modglm, method="Wald")[4,1:2][2]),2),")")
+
+```
+Not significant
+
+```{r}
+##documented
+dglm <- glmer(bin_weight2~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|residence),na.action=na.omit, data = doc_weight, family = binomial(link = "logit"), 
+	control = glmerControl(optimizer = "bobyqa",nAGQ=9))
+
+##bmi categorised, take out smoke, married be binary, model per residence status, poorest vs richest
+
+
+	paste0(round(exp(summary(dglm)$coefficient[2,1:2][1]),2)," (",
+	round(exp(confint(dglm, method="Wald")[4,1:2][1]),2),", ",
+	round(exp(confint(dglm, method="Wald")[4,1:2][2]),2),")")
+```
+
+
+
+There are other models fit by grouping the dataset by residence or wealth to ascertain if there were statistical differences but these cannot be ran with this data because I do not yet have information on administrative levels incorporated.
