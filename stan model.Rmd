@@ -1,0 +1,181 @@
+---
+title: "stan model"
+author: "Barbara E. Mottey"
+date: "1/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(tidyverse)
+library(forcats)
+library(lme4)
+library(pander)
+library(magrittr)
+```
+
+```{r}
+dat <- readRDS("completedata.rds")
+to_factors <- c("fuel_bin", "gender", "residence", "wealth", "education", "marital_s", "region")
+dat %<>% mutate_at(to_factors, funs(factor(.)))
+head(dat)
+```
+
+
+
+## Define the model
+
+### We have multiple measurements from each region - independence assumption might be violated. So we add a random/varying intercept
+
+$$Y_{ij} = \beta_0 + \beta_1x_{1,i} + ... + \beta_px_{p,i} + u_{0j} + \varepsilon_{ij}$$
+
+$p = 8$
+
+Take 
+$$u_{0j} \thicksim N(0, \sigma_u^2)$$ 
+$$\varepsilon_{ij} \thicksim N(0, \sigma_\epsilon^2)$$
+
+
+
+## Option A (not using a .stan file)
+```{r}
+stancode <- "
+  data {
+    // number of observations
+    int<lower=1> Nobs;
+    
+    // number of predictors
+    int<lower=1> Npreds;
+     
+    // number of regions
+    int<lower=1> J;
+    
+    // response list of length Nobs
+    real weight[Nobs];
+    
+    // response matrix
+    matrix[Nobs, Npreds] X;
+   
+   // provide the id for each region
+   // this will be a list of length Nobs
+   int<lower=1, upper=J> region[Nobs];
+    
+  }
+  
+  parameters {
+    // matrix of regression coefficients ...
+    // matrix[Npreds, J] beta; // this gives random slopes model
+    vector[Npreds] beta; // this gives fixed slopes
+    
+    
+    // region intercept
+    vector[J] u;
+    
+    // specify the error terms
+    real<lower=0> sigma_model;
+    real<lower=0> sigma_region;
+  }
+  
+  
+  model {
+    // declare a local variable
+    real mu;
+    // draw value from it's theoretical formulation
+    u ~ normal(0, sigma_region);
+    // likelihood
+    for (i in 1:Nobs){
+      // remember mu = XB + u  ... you could move this to transformed parameters
+      mu = X[i, ]*beta + u[region[i]];
+      weight[i] ~ normal(mu, sigma_model);
+    }
+  }
+
+"
+```
+
+
+```{r}
+# get the design matrix
+lm.mod <- lm(c_weight~.-region, data = dat_clean)
+X.matrix = model.matrix(lm.mod)
+head(X.matrix)
+
+### instead of this, subset (fuel_bin to marital_s +intercept term) and use that as your matrix and compare the results
+
+sub2 <- dat[, 2:9]
+#sub2$
+intercept <- rep(1, nrow(sub2))
+
+sub2<-cbind(intercept, sub2)
+X.matrix2 <- sub2
+```
+
+
+```{r}
+# data for stan
+stanData <- list(
+  # number of observations
+  Nobs = nrow(dat),
+  # number of predictors
+  Npreds = dim(X.matrix2)[2],
+  # number of regions
+  J = nlevels(dat$region),
+  # region indicators -- should be integers
+  region = as.integer(dat$region),
+  # response vector
+  weight = dat$c_weight,
+  # design matrix
+  X = X.matrix2
+  )
+```
+
+
+```{r}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+fit <- stan(model_code = stancode, data=stanData, iter=1000, chains=4)
+print(fit)
+```
+
+
+```{r}
+betas <- (extract(fit))$beta
+apply(betas, 2, mean)
+
+##mean and CI of posterior estimate of cooking fuel
+mean(betas[, 1])
+quantile(betas[, 1], c(0.025,0.975))
+
+```
+
+
+##Option 2
+```{r}
+model<- stan_model("stanbw.stan")
+
+fit1<- sampling(model, stanData,  iter=2000, chains=4)
+params<- extract(fit1) #extract the parameters for graphing
+
+## histogram of average birthweight from cooking fuel
+hist(params$beta[,2])
+
+
+Betas <- (extract(fit1))$beta
+apply(Betas, 2, mean)
+
+##mean and CI of posterior estimate of cooking fuel
+mean(Betas[, 2])
+quantile(Betas[, 2], c(0.025,0.975))
+```
+
+
+
+```{r}
+library(shinystan)
+
+launch_shinystan(fit)
+```
+
