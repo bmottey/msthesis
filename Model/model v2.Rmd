@@ -1,0 +1,131 @@
+---
+title: "Model draft"
+author: "Barbara E. Mottey"
+date: "11/6/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggmosaic)
+library(GGally)
+library(forcats)
+#install.packages("lme4")
+library(lme4)
+library(pander)
+```
+
+```{r, echo=FALSE}
+#newdata1 <- readRDS("modeldata.rds")
+#newdata1<- newdata %>% filter(country.name =="Ghana")
+
+newdata <- readRDS("model_datagh.rds")
+newdata$marital_s<- ifelse(newdata$marital_s %in% c(1:2),1,0)
+#attach(newdata)
+
+
+##binary birth weight
+newdata$bin_weight[newdata$c_weight %in% c(0:2499)]<- 1
+newdata$bin_weight[newdata$c_weight %in% c(2500:5500)]<- 0      
+
+#OR (10.17% are underweight)
+#newdata$bin_weight2 <- ifelse(newdata$c_weight <2500,1,0) 
+
+##binary birth weight without 6000 (4.03% above 4500 n above)
+#newdata$bin_weight[newdata$c_weight %in% c(0:2499)]<- 0
+#newdata$bin_weight[newdata$c_weight %in% c(2500:4499)]<- 1      
+#newdata$bin_weight[newdata$c_weight %in% c(4500:6000)]<- 2
+
+###marital status
+#newdata$marital_s[newdata$marital_s %in% c(0,3:5)]<- 0
+#newdata$marital_s[newdata$marital_s %in% c(1:2)]<- 1   
+
+
+```
+
+
+model 1
+```{r }
+
+mod1 <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = newdata)
+
+
+c(summary(mod1)$coefficient[2,1:2], confint(mod1, method="Wald")[4,1:2],nobs(mod1),"birthweight",
+	paste0(round(summary(mod1)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod1, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod1, method="Wald")[4,1:2][2],2),")"))
+
+
+```
+
+with anemic
+```{r}
+mod_ane <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+as.factor(anemic)+(1|region),na.action=na.omit, data = newdata)
+
+
+
+	paste0(round(summary(mod_ane)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_ane, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_ane, method="Wald")[4,1:2][2],2),")")
+```
+
+## using only documented weights
+```{r}
+doc_weight <- filter(newdata, document == 1)
+mod_doc <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = doc_weight)
+
+
+
+	paste0(round(summary(mod_doc)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_doc, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_doc, method="Wald")[4,1:2][2],2),")")
+
+
+##anemia
+mod_doc_a <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+as.factor(wealth)+as.factor(education)+as.factor(marital_s)+as.factor(anemic)+(1|region),na.action=na.omit, data = doc_weight)
+
+
+	paste0(round(summary(mod_doc_a)$coefficient[2,1:2][1],2)," (",
+	round(confint(mod_doc_a, method="Wald")[4,1:2][1],2),", ",
+	round(confint(mod_doc_a, method="Wald")[4,1:2][2],2),")")
+```
+
+
+
+
+##GLM 
+```{r, warning=FALSE, message=FALSE}
+modglm <- glmer(bin_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = newdata, family = binomial(link = "logit"), 
+	control = glmerControl(optimizer = "bobyqa",nAGQ=9))
+
+
+	paste0(round(exp(summary(modglm)$coefficient[2,1:2][1]),2)," (",
+	round(exp(confint(modglm, method="Wald")[4,1:2][1]),2),", ",
+	round(exp(confint(modglm, method="Wald")[4,1:2][2]),2),")")
+
+```
+Not significant
+
+```{r, warning=FALSE, message=FALSE}
+##documented
+dglm <- glmer(bin_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+
+		as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = doc_weight, family = binomial(link = "logit"), 
+	control = glmerControl(optimizer = "bobyqa",nAGQ=9))
+
+##bmi categorised, take out smoke, married be binary, model per residence status, poorest vs richest
+
+
+	paste0(round(exp(summary(dglm)$coefficient[2,1:2][1]),2)," (",
+	round(exp(confint(dglm, method="Wald")[4,1:2][1]),2),", ",
+	round(exp(confint(dglm, method="Wald")[4,1:2][2]),2),")")
+```
+
+Not significant
+
+
