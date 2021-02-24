@@ -1,0 +1,351 @@
+---
+title: "INLA practice"
+author: "Barbara E. Mottey"
+date: "2/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(SpatialEpi)
+library(sp)
+
+
+```
+
+## Data
+
+```{r}
+data(pennLC)
+head(pennLC$data)
+pennLC$spatial.polygon
+
+
+## clean
+library(dplyr)
+d <- group_by(pennLC$data, county) %>% summarize(Y = sum(cases))
+head(d)
+
+##merge datasets
+d <- merge(d, pennLC$smoking, by = "county")
+
+
+## new vars
+pennLC$data <- pennLC$data[order(pennLC$data$county, pennLC$data$race, pennLC$data$gender, pennLC$data$age), ]
+
+##expected cases while considering the strata
+E <- expected(population = pennLC$data$population, cases = pennLC$data$cases, n.strata = 16)
+
+d$E <- E
+
+#calc SMR
+d$SMR <- d$Y/d$E
+
+##county
+
+rownames(d) <- d$county
+map <- pennLC$spatial.polygon
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+head(map@data)
+```
+
+##leaflet for visuality of map now there is mapview
+```{r}
+#install.packages("leaflet")
+library(leaflet)
+l <- leaflet(map) %>% addTiles()
+
+pal <- colorNumeric(palette = "YlOrRd", domain = map$SMR)
+
+l %>% addPolygons(color = "grey", weight = 1, fillColor = ~pal(SMR), fillOpacity = 0.5) %>%
+  addLegend(pal = pal, values = ~SMR, opacity = 0.5, title = "SMR", position = "bottomright")
+```
+
+## making map more interractive
+```{r}
+labels <- sprintf("<strong>%s</strong><br/>Observed: %s <br/>Expected: %s <br/>Smokers proportion: %s <br/>SMR: %s",
+  map$county, map$Y,  round(map$E, 2), map$smoking, round(map$SMR, 2)) %>%
+  lapply(htmltools::HTML)
+
+l %>% addPolygons(color = "grey", weight = 1, fillColor = ~pal(SMR), fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~SMR, opacity = 0.5, title = "SMR", position = "bottomright")
+```
+
+## INLA
+log(theta) = B0 +B1x smoking +ui(structured )
+```{r}
+
+library(spdep)
+library(INLA)
+nb <- poly2nb(map) #for calculating neighbors
+head(nb)
+```
+
+```{r}
+## convert nb list to a file readable by inla
+nb2INLA("map.adj", nb)
+g <- inla.read.graph(filename = "map.adj") #neighbour of each area
+
+
+##define stuctured and unstructured spatial re vectors
+map$re_u <- 1:nrow(map@data)
+map$re_v <- 1:nrow(map@data)
+
+##formula
+formula <- Y ~ smoking + f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") #re_u index that applies to no. of areas, besag = spatial model
+
+# inla
+res <- inla(formula, family = "poisson", data = map@data, E = E, control.predictor = list(compute = TRUE))
+
+summary(res)
+```
+
+## posterior
+```{r}
+library(ggplot2)
+marginal <- inla.smarginal(res$marginals.fixed$smoking) #posterior distn of b1 is stored here
+marginal <- data.frame(marginal)
+ggplot(marginal, aes(x = x, y = y)) + geom_line() + labs(x = expression(beta[1]), y = "Density") +
+  geom_vline(xintercept = 0, col = "blue") + theme_bw()
+```
+
+##
+```{r}
+head(res$summary.fitted.values)#estimates for each of the counties
+
+#include these in map for inla graphing of penn map
+map$RR <- res$summary.fitted.values[, "mean"]
+map$LL <- res$summary.fitted.values[, "0.025quant"]
+map$UL <- res$summary.fitted.values[, "0.975quant"]
+```
+
+#graph with inla
+```{r}
+pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+
+labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+                  Smokers proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+                  map$county, map$Y,  round(map$E, 2),  map$smoking, round(map$SMR, 2),
+                  round(map$RR, 2), round(map$LL, 2), round(map$UL, 2)) %>%
+  lapply(htmltools::HTML)
+
+leaflet(map) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~RR, opacity = 0.5, title = "RR", position = "bottomright")
+```
+
+Test
+```{r}
+n = 100; a = 1; b = 1; tau = 100
+z = rnorm(n)
+eta = a + b*z
+
+scale = exp(rnorm(n))
+prec = scale*tau
+y = rnorm(n, mean = eta, sd = 1/sqrt(prec))
+
+
+data = list(y=y, z=z)
+formula = y ~ 1+z
+result = inla(formula, family = "gaussian", data = data)
+
+summary(result)
+```
+
+##GAMBIA
+```{r}
+install.packages("geoR")
+library(geoR)
+data(gambia)
+```
+
+## 
+```{r}
+dim(gambia)
+head(gambia)
+```
+
+
+```{r}
+#unique village
+dim(unique(gambia[, c("x", "y")]))
+```
+
+# aggregate data
+```{r}
+library(dplyr)
+d <- group_by(gambia, x, y) %>% 
+  summarize(total = n(),
+            positive = sum(pos),
+            prev = positive/total)
+head(d)
+```
+
+#convert UTM points to long and lat
+```{r}
+library(sp)
+library(rgdal)
+sps  <- SpatialPoints(d[, c("x", "y")], proj4string = CRS("+proj=utm +zone=28"))
+spst <- spTransform(sps, CRS("+proj=longlat +datum=WGS84"))
+
+d[, c("long", "lat")] <- coordinates(spst)
+head(d)
+```
+
+#plotting 
+```{r}
+library(leaflet)
+pal <- colorBin("viridis", bins = c(0, 0.25, 0.5, 0.75, 1))
+leaflet(d) %>%  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircles(lng = ~long, lat = ~lat, color = ~pal(prev)) %>%
+   addLegend("bottomright", pal = pal, values = ~prev, title = "Prevalence") %>%
+  addScaleBar(position = c("bottomleft"))
+```
+
+
+# covariate (altitude)
+```{r}
+library(raster)
+r <- getData(name = 'alt', country = 'GMB', mask = TRUE) #covariate extracted
+```
+
+
+#elevation map
+```{r}
+pal <- colorNumeric("viridis", values(r), na.color = "transparent")
+
+leaflet() %>% addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(r, colors = pal, opacity = 0.5) %>%
+  addLegend("bottomright", pal = pal, values = values(r), title = "Altitude") %>%
+  addScaleBar(position = c("bottomleft"))
+```
+
+#
+```{r}
+d$alt <- extract(r, d[, c("long", "lat")])
+```
+
+#build mesh
+```{r}
+library(INLA)
+coo <- cbind(d$long, d$lat)
+mesh <- inla.mesh.2d(loc = coo, max.edge = c(0.1, 5), cutoff = 0.01) #traingulation has 699 vertices
+
+
+plot(mesh)
+points(coo, col = "red")
+```
+
+#build spde on mesh
+```{r}
+spde <- inla.spde2.matern(mesh = mesh, alpha = 2) #indices of spatial effect
+
+
+##index sets
+indexs <- inla.spde.make.index("s", spde$n.spde)
+lengths(indexs)
+
+##projector matrix to project GRF at mesh nodes
+A <- inla.spde.make.A(mesh = mesh, loc = coo)
+
+
+#raster points
+dp <- rasterToPoints(r) #where to predict
+dim(dp) #12964
+
+#aggregate raster in fewer points for prediction
+ra <- aggregate(r, fact = 5, fun = mean)
+
+dp <- rasterToPoints(ra)
+dim(dp)
+
+#saved
+coop <- dp[, c("x", "y")]
+Ap <- inla.spde.make.A(mesh = mesh, loc = coop) #matrix for prediction location
+```
+
+
+##stacks
+```{r}
+#stack for estimation stk.e
+stk.e <- inla.stack(tag = "est",
+data = list(y = d$positive, numtrials = d$total),
+A = list(1, A),
+effects = list(data.frame(b0 = 1, cov = d$alt), s = indexs))
+
+#stack for prediction stk.p
+stk.p <- inla.stack(tag = "pred",
+data = list(y = NA, numtrials = NA),
+A = list(1, Ap),
+effects = list(data.frame(b0 = 1, cov = dp[, 3]), s = indexs))
+
+#stk.full has stk.e and stk.p
+stk.full <- inla.stack(stk.e, stk.p)
+```
+
+
+##model formula
+```{r}
+formula <- y ~ 0 + b0 + cov + f(s, model = spde) #cov is altitude
+
+res <- inla(formula, family = "binomial", Ntrials = numtrials,
+control.family = list(link = "logit"),
+data = inla.stack.data(stk.full),
+control.predictor = list(compute = TRUE, link = 1, A = inla.stack.A(stk.full)))
+
+
+summary(res)
+```
+
+##plot map
+```{r}
+#indices of prediction
+index <- inla.stack.index(stack = stk.full, tag = "pred")$data
+
+#mean and CIs of posterior
+prev_mean <- res$summary.fitted.values[index, "mean"]
+prev_ll <- res$summary.fitted.values[index, "0.025quant"]
+prev_ul <- res$summary.fitted.values[index, "0.975quant"]
+
+
+r_prev_mean <- rasterize(x = coop, y = ra, field = prev_mean, fun = mean)
+
+
+#plot
+# mean prevalance
+pal <- colorNumeric("viridis", c(0, 1), na.color = "transparent")
+
+leaflet() %>% addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(r_prev_mean, colors = pal, opacity = 0.5) %>%
+  addLegend("bottomright", pal = pal, values = values(r_prev_mean), title = "Prevalence") %>%
+  addScaleBar(position = c("bottomleft"))
+
+#lower level CI map
+r_prev_ll <- rasterize(x = coop, y = ra, field = prev_ll, fun = mean)
+
+leaflet() %>% addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(r_prev_ll, colors = pal, opacity = 0.5) %>%
+  addLegend("bottomright", pal = pal, values = values(r_prev_ll), title = "LL") %>%
+  addScaleBar(position = c("bottomleft"))
+
+
+#upper level CI map
+r_prev_ul <- rasterize(x = coop, y = ra, field = prev_ul, fun = mean)
+
+leaflet() %>% addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(r_prev_ul, colors = pal, opacity = 0.5) %>%
+  addLegend("bottomright", pal = pal, values = values(r_prev_ul), title = "UL") %>%
+  addScaleBar(position = c("bottomleft"))
+```
+
+
+

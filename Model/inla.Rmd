@@ -1,0 +1,83 @@
+---
+title: "gps data mapping"
+author: "Barbara E. Mottey"
+date: "2/17/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sp)
+library(maptools)
+library(rgdal)
+library(ggplot2)
+library(tidyverse)
+library(forcats)
+library(pander)
+library(magrittr)
+library(dplyr)
+```
+
+
+```{r}
+dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/completedata.rds')
+
+to_factors <- c("fuel_bin", "gender", "residence", "wealth", "education", "marital_s", "region")
+dat %<>% mutate_at(to_factors, funs(factor(.)))
+```
+
+
+## LMER in INLA
+```{r}
+library(INLA)
+
+formula = c_weight~1+fuel_bin+w_age+bmi+gender+residence+wealth+education+marital_s+ f(region, model = "iid")
+result<-inla(formula, family = "gaussian", data=dat, control.predictor = list(compute = TRUE))
+
+summary(result)
+```
+
+
+```{r}
+## plot of posterior distribution for b1
+marginal <- inla.smarginal(result$marginals.fixed$fuel_bin1) #posterior distn of b1 is stored here
+marginal <- data.frame(marginal)
+ggplot(marginal, aes(x = x, y = y)) + geom_line() + labs(x = expression(beta[1]), y = "Density") +
+  geom_vline(xintercept = 0, col = "blue") + theme_bw()
+```
+
+
+
+```{r }
+#2014 contains 1310 entries
+d <- dat %>% filter(year_cmc=="2014") %>% group_by( cluster.no) %>% 
+  summarize(meanbw = mean(c_weight)) #394 unique clusters
+#head(d)
+#newdata %>% filter(year_cmc=="2014") %>% group_by(cluster.no) %>% summarise(meanbw = mean(c_weight)) #417 unique clusters
+#unique(d$cluster.no)
+
+#table(dat$fuel_bin[dat$fuel_bin == 0])
+```
+
+##GPS coordinates
+```{r }
+#gc<-read.csv("GPS/GHGC72FL.csv")
+
+
+ge.shp<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/GHGE71FL/GHGE71FL.shp")
+
+gt<-ge.shp@data
+
+#summary(gt$ALT_GPS)
+
+plot(ge.shp, pch=".", col="red")
+```
+
+
+#merge with geo data
+```{r}
+#ge.shp@data$meanbw <- extract(d, ge.shp@data[, c("DHSCLUST")])
+```
+
