@@ -18,10 +18,11 @@ library(forcats)
 library(pander)
 library(magrittr)
 library(dplyr)
+library(INLA)
 ```
 
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/completedata.rds')
 
 to_factors <- c("fuel_bin", "gender", "residence", "wealth", "education", "marital_s", "region")
@@ -31,7 +32,6 @@ dat %<>% mutate_at(to_factors, funs(factor(.)))
 
 ## LMER in INLA
 ```{r}
-library(INLA)
 
 formula = c_weight~1+fuel_bin+w_age+bmi+gender+residence+wealth+education+marital_s+ f(region, model = "iid")
 result<-inla(formula, family = "gaussian", data=dat, control.predictor = list(compute = TRUE))
