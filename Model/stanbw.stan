@@ -44,7 +44,7 @@ data {
     for (i in 1:Nobs){
       // remember mu = XB + u  ... you could move this to transformed parameters
       mu = X[i, ]*beta + u[region[i]];
-      weight[i] ~ normal(mu, sigma_model);
+      log(weight[i]) ~ normal(mu, sigma_model);
     }
   }
   

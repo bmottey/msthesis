@@ -1,0 +1,149 @@
+---
+title: "RE models"
+author: "Barbara E. Mottey"
+date: "3/3/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(forcats)
+library(lme4)
+library(pander)
+library(magrittr)
+```
+
+## data
+
+```{r}
+dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/completedata.rds')
+
+to_factors <- c("fuel_bin", "gender", "residence", "wealth", "education", "marital_s", "region")
+dat %<>% mutate_at(to_factors, funs(factor(.)))
+
+
+sub2 <- dat[, 2:9]
+#sub2$
+intercept <- rep(1, nrow(sub2))
+
+sub2<-cbind(intercept, sub2)
+X.matrix2 <- sub2
+```
+
+#LMER
+```{r}
+mod1 <- lmer(log(c_weight)~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = dat)
+
+
+c(summary(mod1)$coefficient[2,1:2], confint(mod1, method="Wald")[4,1:2],nobs(mod1),"birthweight",
+	paste0(round(summary(mod1)$coefficient[2,1:2][1],3)," (",
+	round(confint(mod1, method="Wald")[4,1:2][1],3),", ",
+	round(confint(mod1, method="Wald")[4,1:2][2],3),")"))
+
+mod2 <- lmer(c_weight~as.factor(fuel_bin)+w_age+bmi+as.factor(gender)+as.factor(residence)+ as.factor(wealth)+as.factor(education)+as.factor(marital_s)+(1|region),na.action=na.omit, data = dat)
+```
+
+```{r}
+as.data.frame(ranef(mod1)) %>% 
+  ggplot(aes(y=grp, x= condval, col= grp))+
+  geom_point()+
+  geom_errorbarh(aes(xmin=condval+qnorm(0.025)*condsd, xmax= condval+qnorm(0.975)*condsd))+ 
+  labs(main= "region intercepts and Confidence Intervals", x= "log(birth weight)", y= "regions")
+
+
+as.data.frame(ranef(mod2)) %>% 
+  ggplot(aes(y=grp, x= condval, col= grp))+
+  geom_point()+
+  geom_errorbarh(aes(xmin=condval+qnorm(0.025)*condsd, xmax= condval+qnorm(0.975)*condsd))+ 
+  labs(main= "region intercepts and Confidence Intervals", x= "birth weight", y= "regions")
+```
+
+
+# stan
+```{r }
+# data for stan
+stanData <- list(
+  # number of observations
+  Nobs = nrow(dat),
+  # number of predictors
+  Npreds = dim(X.matrix2)[2],
+  # number of regions
+  J = nlevels(dat$region),
+  # region indicators -- should be integers
+  region = as.integer(dat$region),
+  # response vector
+  weight = dat$c_weight,
+  # design matrix
+  X = X.matrix2
+  )
+```
+
+
+```{r, message=FALSE}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+model<- stan_model("C:/Users/sympl/Documents/UMass/msthesis/Model/stanbw.stan")
+
+fit1<- sampling(model, stanData,  iter=2000, chains=4)
+params<- extract(fit1) #extract the parameters for graphing
+
+
+```
+
+
+```{r }
+## histogram of average birthweight from cooking fuel
+hist(params$beta[,2])
+labs=(main="posterior estimates from fuel use")
+
+
+Betas <- (extract(fit1))$beta
+apply(Betas, 2, mean)
+
+##mean and CI of posterior estimate of cooking fuel
+mean(Betas[, 2])
+quantile(Betas[, 2], c(0.025,0.975))
+```
+
+
+## INLA
+```{r, message=FALSE}
+library(INLA)
+formula = log(c_weight)~1+fuel_bin+w_age+bmi+gender+residence+wealth+education+marital_s+ f(region, model = "iid")
+result<-inla(formula, family = "gaussian", data=dat, control.predictor = list(compute = TRUE))
+
+summary(result)
+```
+
+
+##plot of intercept
+```{r}
+# df.ranef<-as.data.frame(result$summary.random)
+# 
+# if(df.ranef[,1]==1){df.ranef$region.name="Western"}
+# else if(df.ranef[,1]==2){df.ranef$region.name=="Central"}
+# else if(df.ranef[,1]==3){region.name=="Greater Accra"}
+# else if(df.ranef[,1]==4){region.name=="Volta"}
+# else if(df.ranef[,1]==5){region.name=="Eastern"}
+# else if(df.ranef[,1]==6){region.name=="Ashanti"}
+# else if(df.ranef[,1]==7){region.name=="Brong Ahafo"}
+# else if(df.ranef[,1]==8){region.name=="Northern"}
+# else if(df.ranef[,1]==9){region.name=="Upper East"}
+# else region.name=="Upper West"
+
+as.data.frame(result$summary.random) %>% 
+  ggplot(aes(y=region.ID, x= region.mean, col= region.ID))+
+  geom_point()+
+  geom_errorbarh(aes(xmin=region.mean+region.0.025quant, xmax= region.mean+region.0.975quant))+ 
+  labs(main= "region intercepts and Confidence Intervals", x= "log(birth weight)", y= "regions")
+```
+
+
+
+
