@@ -99,5 +99,13 @@ abline(h=0, col="red")
 
 ```
 
+##
+```{r}
+dd <- trial %>% group_by(region) %>% 
+  summarize(meanbw = mean(c_weight))
+
+#how to interpret
+moran.test(dd$meanbw, nb2listw(nb), 10)
+```
 
 
