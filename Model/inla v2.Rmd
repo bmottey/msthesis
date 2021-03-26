@@ -1,0 +1,103 @@
+---
+title: "inla v2"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sp)
+library(maptools)
+library(rgdal)
+library(ggplot2)
+library(tidyverse)
+library(forcats)
+library(pander)
+library(magrittr)
+library(dplyr)
+library(INLA)
+```
+
+## data
+
+```{r cars}
+dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/2014data.rds')
+
+#dd<- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/regiondata.rds')
+
+ge.shp<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/GHGE71FL/GHGE71FL.shp")
+
+bound<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/sdr_subnational_boundaries_2021-03-05/shps/sdr_subnational_boundaries.shp")
+
+
+# district boundary
+dist<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/Ghana_District_CORRECT/Ghana_districts_correct.shp")
+
+
+dist2<- readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/gadm36_GHA_shp/gadm36_GHA_2.shp")
+
+
+dist3<- readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/Ghana_Dist_DHS_Join/GPS_Points_Districts.shp")
+
+plot(bound)
+points(ge.shp, pch=".", col="red")
+
+
+
+plot(dist2) #from LA
+points(ge.shp, pch=".", col="red")
+
+
+```
+
+## nb
+```{r }
+library(spdep)
+nb <- poly2nb(bound, row.names = bound@data$REGCODE) #for calculating neighbors
+
+nb2INLA("map.adj", nb)
+g <- inla.read.graph(filename = "map.adj")
+
+##define stuctured and unstructured spatial re vectors
+bound$re_u <- 1:nrow(bound@data)
+bound$re_v <- 1:nrow(bound@data)
+
+trial<-dat
+trial$region<- as.numeric(trial$region)
+trial<-trial %>% right_join(bound@data, by= c("region"="REGCODE"))
+```
+
+## fitting iid random effect
+```{r}
+##formula
+formula <- c_weight ~ fuel_bin+gender+education+ w_age+ marital_s+wealth+bmi+residence + f(re_v, model = "iid") 
+
+# inla
+res <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
+
+summary(res)
+```
+
+## plotting residuals
+```{r}
+#age
+residuals=  trial$c_weight-res$summary.fitted.values[,1]
+plot(trial$w_age,residuals, main= "age against residual", xlab="age of women")
+abline(h=0, col="red")
+
+
+#bmi
+plot(trial$bmi,residuals, main= "bmi against residual", xlab="bmi of women")
+abline(h=0, col="red")
+
+#posterior
+plot(res$summary.fitted.values[,1],residuals, main= "posterior vs residual", xlab="posterior means")
+abline(h=0, col="red")
+
+#priors not sure
+
+```
+
+
+

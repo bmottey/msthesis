@@ -1,0 +1,267 @@
+---
+title: "indl model"
+author: "Barbara E. Mottey"
+date: "3/12/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sp)
+library(maptools)
+library(rgdal)
+library(ggplot2)
+library(tidyverse)
+library(forcats)
+library(pander)
+library(magrittr)
+library(dplyr)
+library(INLA)
+library(leaflet)
+library(spdep)
+```
+
+### RECOUP
+```{r}
+dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/2014data.rds')
+
+
+ge.shp<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/GHGE71FL/GHGE71FL.shp")
+
+#regions
+bound<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/sdr_subnational_boundaries_2021-03-05/shps/sdr_subnational_boundaries.shp")
+
+
+
+plot(bound)
+points(ge.shp, pch=".", col="red")
+
+
+
+
+```
+
+
+
+
+#combine
+```{r}
+nb <- poly2nb(bound) #for calculating neighbors
+head(nb)
+nb2INLA("map.adj", nb)
+g <- inla.read.graph(filename = "map.adj") #neighbour of each area
+
+
+##define stuctured and unstructured spatial re vectors
+bound$re_u <- 1:nrow(bound@data)
+bound$re_v <- 1:nrow(bound@data)
+
+trial<-dat
+trial$region<- as.numeric(trial$region)
+trial<-trial %>% right_join(bound@data, by= c("region"="REGCODE"))
+#2=w/r, 10=e/r, 9=a/r, 7=c/r, 6=v/r, 5=ba, 4=n/r, 3=uw, 1=ue, 8=ga
+```
+
+
+##INLA
+```{r}
+## continuous age
+## model 4 indl
+
+formula <- c_weight ~ fuel_bin+gender+education+ w_age+ marital_s+wealth+bmi+residence+ f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") #re_u index that applies to no. of areas, besag = spatial model
+
+# inla
+res <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
+
+summary(res)
+
+#res2$summary.fitted.values[, "mean"]
+
+#res2$summary.fixed
+
+#log(bw) ~ fueltype+ std bmi+ std age+ educ+ wealth+ marital + gender+(1|region)
+#bw ~ fueltype+ std bmi+ std age+ educ+ wealth+ marital + gender
+#bmi category, model performance assessment, iteration??,
+
+
+#Plot the intercepts to see what spatial variation is left beyond covariates
+#(re, spatial part of the plos paper)
+
+##plot of intercept ind
+as.data.frame(res$summary.random) %>%
+ggplot(aes(y=as.factor(re_u.ID), x= re_u.mean, col= as.factor(re_u.ID)))+
+geom_point()+
+geom_errorbarh(aes(xmin=re_u.mean+re_u.0.025quant, xmax= re_u.mean+re_u.0.975quant))+
+labs(main= "region intercepts and Confidence Intervals", x= "mean spatial effect", y= "regions")+
+  scale_color_discrete(name= "regions",labels = c("W/R", "C/R", "G/R", "V/R", "E/R", "A/R", "B/R", "N/R", "UE/R", "UW/R"))
+
+
+##map
+trial$RR <- res$summary.fitted.values[, "mean"]
+#dd$meanbw
+
+pal <- colorNumeric(palette = "YlOrRd", domain = trial$RR)
+
+# labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+#                   Smokers proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+#                   map$county, map$Y,  round(map$E, 2),  map$smoking, round(map$SMR, 2),
+#                   round(map$RR, 2), round(map$LL, 2), round(map$UL, 2)) %>%
+#   lapply(htmltools::HTML)
+
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(trial$RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~trial$RR, opacity = 0.5, title = "fitted bw", position = "bottomright")
+
+
+```
+
+
+
+
+## the residual plot for fitted values
+```{r}
+residuals=  trial$c_weight-res$summary.fitted.values[,1]
+plot( residuals)
+
+
+plot(trial$w_age,residuals, main= "age against residual", xlab="age of women")
+
+
+#map for idd and car
+re.u<- res$summary.random$re_u #car
+rownames(re.u)<-c("W/R", "C/R", "G/R", "V/R", "E/R", "A/R", "B/R", "N/R", "UE/R", "UW/R")
+
+pal <- colorNumeric(palette = "YlOrRd", domain = re.u$mean)
+
+
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(re.u$mean),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~re.u$mean, opacity = 0.5, title = "spatial effect", position = "bottomright")
+
+#IID
+re.v<- res$summary.random$re_v #iid
+rownames(re.v)<-c("W/R", "C/R", "G/R", "V/R", "E/R", "A/R", "B/R", "N/R", "UE/R", "UW/R")
+
+pal <- colorNumeric(palette = "YlOrRd", domain = round(re.v$mean,8))
+
+
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(re.v$mean),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~round(re.v$mean,8), opacity = 0.5, title = "spatial effect", position = "bottomright")
+
+#both
+both<- as.data.frame(re.u$mean+re.v$mean) #iid
+rownames(re.v)<-c("W/R", "C/R", "G/R", "V/R", "E/R", "A/R", "B/R", "N/R", "UE/R", "UW/R")
+
+pal <- colorNumeric(palette = "YlOrRd", domain = both[,1])
+
+
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(both[,1]),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~both[,1], opacity = 0.5, title = "spatial effect", position = "bottomright")
+```
+
+
+```{r}
+## grouped age and bmi
+## model 4 indl
+
+formula <- c_weight ~ fuel_bin+gender+education+ as.factor(w_agegrp)+ marital_s+wealth+as.factor(bmicat)+residence+ f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") #re_u index that applies to no. of areas, besag = spatial model
+
+# inla
+res1 <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
+
+summary(res1)
+
+
+
+##map
+trial$RR <- res1$summary.fitted.values[, "mean"]
+#dd$meanbw
+
+pal <- colorNumeric(palette = "YlOrRd", domain = trial$RR)
+
+# labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+#                   Smokers proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+#                   map$county, map$Y,  round(map$E, 2),  map$smoking, round(map$SMR, 2),
+#                   round(map$RR, 2), round(map$LL, 2), round(map$UL, 2)) %>%
+#   lapply(htmltools::HTML)
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(trial$RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~trial$RR, opacity = 0.5, title = "fitted bw", position = "bottomright")
+
+```
+
+
+```{r}
+## grouped age and bmi
+## model 4 indl
+
+formula <- c_weight ~ fuel_bin+gender+education+ as.factor(w_agegrp)+ marital_s+wealth+as.factor(bmicat)+residence+ f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") #re_u index that applies to no. of areas, besag = spatial model
+
+# inla
+res1 <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
+
+summary(res1)
+
+
+
+##map
+trial$RR <- res1$summary.fitted.values[, "mean"]
+#dd$meanbw
+
+pal <- colorNumeric(palette = "YlOrRd", domain = trial$RR)
+
+# labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+#                   Smokers proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+#                   map$county, map$Y,  round(map$E, 2),  map$smoking, round(map$SMR, 2),
+#                   round(map$RR, 2), round(map$LL, 2), round(map$UL, 2)) %>%
+#   lapply(htmltools::HTML)
+
+leaflet(bound) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(trial$RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    #label = labels,
+    labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~trial$RR, opacity = 0.5, title = "fitted bw", position = "bottomright")
+
+```
+
+## the residual plot for fitted values
+```{r}
+residuals=  trial$c_weight-res$summary.fitted.values[,1]
+plot( residuals)
+
+#png("ageplot.png")
+plot(trial$w_age,residuals, main= "age against residual", xlab="age of women")
+abline(h=0, col="red")
+#dev.off()
+```
