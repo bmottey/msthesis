@@ -17,11 +17,14 @@ library(pander)
 library(magrittr)
 library(dplyr)
 library(INLA)
+library(leaflet)
+library(spdep)
 ```
+
 
 ## data
 
-```{r cars}
+```{r, message=FALSE, warning=FALSE}
 dat <- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/2014data.rds')
 
 #dd<- readRDS('C:/Users/sympl/Documents/UMass/msthesis/Data/regiondata.rds')
@@ -35,9 +38,11 @@ bound<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/sdr_subnational_boun
 dist<-readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/Ghana_District_CORRECT/Ghana_districts_correct.shp")
 
 
+#from LA
 dist2<- readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/gadm36_GHA_shp/gadm36_GHA_2.shp")
 
 
+#From RA spatial points
 dist3<- readOGR("C:/Users/sympl/Documents/UMass/msthesis/GPS/Ghana_Dist_DHS_Join/GPS_Points_Districts.shp")
 
 plot(bound)
@@ -45,13 +50,13 @@ points(ge.shp, pch=".", col="red")
 
 
 
-plot(dist2) #from LA
-points(ge.shp, pch=".", col="red")
+plot(dist) 
+points(dist3, pch=".", col="red")
 
 
 ```
 
-## nb
+## nb for regional boundaries
 ```{r }
 library(spdep)
 nb <- poly2nb(bound, row.names = bound@data$REGCODE) #for calculating neighbors
@@ -68,6 +73,7 @@ trial$region<- as.numeric(trial$region)
 trial<-trial %>% right_join(bound@data, by= c("region"="REGCODE"))
 ```
 
+
 ## fitting iid random effect
 ```{r}
 ##formula
@@ -76,10 +82,20 @@ formula <- c_weight ~ fuel_bin+gender+education+ w_age+ marital_s+wealth+bmi+res
 # inla
 res <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
 
-summary(res)
+#summary(res)
+
+##re car
+formula <- c_weight ~ fuel_bin+gender+education+ w_age+ marital_s+wealth+bmi+residence + f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") 
+
+# inla
+res1 <- inla(formula, family = "gaussian", data = trial,  control.predictor = list(compute = TRUE))
+
+#summary(res1)
+
 ```
 
-## plotting residuals
+
+## plotting residuals for IID
 ```{r}
 #age
 residuals=  trial$c_weight-res$summary.fitted.values[,1]
@@ -99,13 +115,185 @@ abline(h=0, col="red")
 
 ```
 
-##
+## plotting residuals  (IID+CAR)
 ```{r}
-dd <- trial %>% group_by(region) %>% 
-  summarize(meanbw = mean(c_weight))
+#age
+residuals1=  trial$c_weight-res1$summary.fitted.values[,1]
+plot(trial$w_age,residuals1, main= "age against residual", xlab="age of women")
+abline(h=0, col="red")
 
-#how to interpret
-moran.test(dd$meanbw, nb2listw(nb), 10)
+
+#bmi
+plot(trial$bmi,residuals1, main= "bmi against residual", xlab="bmi of women")
+abline(h=0, col="red")
+
+#posterior
+plot(res1$summary.fitted.values[,1],residuals1, main= "posterior vs residual", xlab="posterior means")
+abline(h=0, col="red")
+
+#priors not sure
+
 ```
 
+##map of residuals
+```{r}
+# trial$residual <- residuals
+# 
+# 
+# pal <- colorNumeric(palette = "YlOrRd", domain = trial$residual)
+# 
+# 
+# 
+# leaflet(bound) %>% addTiles() %>%
+#     addPolygons(color = "grey", weight = 1, fillColor = ~pal(trial$residual),  fillOpacity = 0.5,
+#     highlightOptions = highlightOptions(weight = 4), 
+#     #label = labels,
+#     labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+#     textsize = "15px", direction = "auto")) %>% 
+#   
+#     addLegend(pal = pal, values = ~trial$residual, opacity = 0.5, title = "residual", position = "bottomright")
+
+#map of posterior bw
+trial$RR <- res1$summary.fitted.values[,1]
+new3 <- trial %>% group_by(region) %>% 
+  summarize(meanbwreg = mean(RR, na.rm=T))
+bound@data<-bound@data %>% right_join(new3, by= c("REGCODE" = "region"))
+spplot(bound, "meanbwreg")
+
+
+#map of residual
+new3 <- trial %>% group_by(region) %>% 
+  summarize(meanres = mean(residual, na.rm=T))
+bound@data<-bound@data %>% right_join(new3, by= c("REGCODE" = "region"))
+spplot(bound, "meanres")
+
+#map of CAR
+new3 <- data.frame(res1$summary.random$re_u[,1:2], res1$summary.random$re_v[,2])
+colnames(new3)<- c("region" ,"CAR" , "IID")
+new3$iidcar <- new3[,2]+new3[,3]
+bound@data<-bound@data %>% right_join(new3, by= c("REGCODE" = "region"))
+
+spplot(bound, "CAR")
+spplot(bound, "IID")
+spplot(bound, "iidcar")
+```
+
+
+```{r}
+#RE CAR+IID
+
+trial$residuals1<-residuals1
+dd1 <- trial %>% group_by(region) %>% 
+  summarize(meanres1 = mean(residuals1))
+
+# RE IDD
+trial$residuals<-residuals
+dd <- trial %>% group_by(region) %>% 
+  summarize(meanres = mean(residuals))
+
+#moran test for only IID residuals of regions instead
+moran.test(dd$meanres, nb2listw(nb), 10)
+
+#moran test for IID +CAR residuals of regions instead
+moran.test(dd1$meanres1, nb2listw(nb), 10)
+```
+
+
+## DISTRICT
+```{r}
+nb1 <- poly2nb(dist, row.names = dist@data$DIST_NAME)#for calculating neighbors
+
+nb2INLA("map.adj", nb1)
+g <- inla.read.graph(filename = "map.adj") #neighbour of each area
+
+
+##define stuctured and unstructured spatial re vectors
+dist$re_u <- 1:nrow(dist@data)
+dist$re_v <- 1:nrow(dist@data)
+
+trial1<-dat
+trial1$cluster.no<- as.numeric(trial1$cluster.no)
+
+#join dist and dist3
+new<-select(dist@data, "DIST_NAME", "re_v", "re_u")
+dist3@data<-dist3@data %>% right_join(new, by= c("DIST_NAME"="DIST_NAME"))
+
+
+trial1<-trial1 %>% right_join(dist3@data, by= c("cluster.no"="DHSCLUST"))
+```
+
+
+```{r}
+## continuous age
+## model 4 indl
+
+formula <- c_weight ~ fuel_bin+gender+education+ w_age+ marital_s+wealth+bmi+residence+ f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid") #re_u index that applies to no. of areas, besag = spatial model
+
+# inla
+res2 <- inla(formula, family = "gaussian", data = trial1,  control.predictor = list(compute = TRUE))
+
+summary(res2)
+
+#res2$summary.random
+```
+
+# residual plots district
+```{r}
+#map of posterior bw
+trial1$RR <- res2$summary.fitted.values[,1]
+new3 <- trial1 %>% group_by(DIST_NAME) %>% 
+  summarize(meanbwreg = mean(RR, na.rm=T))
+dist@data<-dist@data %>% right_join(new3, by= c("DIST_NAME" = "DIST_NAME"))
+spplot(dist, "meanbwreg")
+
+
+#map of residual
+residuals2=  trial1$c_weight-res2$summary.fitted.values[,1]
+trial1$residuals2<-residuals2
+
+new3 <- trial1 %>% group_by(DIST_NAME) %>% 
+  summarize(meanres1 = mean(residuals2, na.rm=T))
+dist@data<-dist@data %>% right_join(new3, by= c("DIST_NAME" = "DIST_NAME"))
+spplot(dist, "meanres1")
+
+#map of CAR
+new3 <- data.frame(res2$summary.random$re_u[,1:2], res2$summary.random$re_v[,2])
+colnames(new3)<- c("DIST_NAME" ,"CAR" , "IID")
+new3$iidcar <- new3[,2]+new3[,3]
+new3$DIST_NAME <- as.character(new3$DIST_NAME)
+dist@data$DIST_NAME <- as.character(dist@data$DIST_NAME)
+dist@data<-dist@data %>% right_join(new3, by= c("DIST_NAME" = "DIST_NAME"))
+
+spplot(dist, "CAR")
+spplot(dist, "IID")
+spplot(dist, "iidcar")
+```
+
+
+
+
+```{r}
+##test for district
+dd3 <- trial1 %>% group_by(DIST_NAME) %>% 
+  summarize(meanres = mean(residuals2, na.rm=T))
+
+#moran test for only IID residuals of regions instead
+moran.test(na.omit(dd3$meanres), nb2listw(nb1), 110)
+```
+
+```{r}
+new1<-select(trial1, "DIST_NAME", "RR")
+new2 <- trial1 %>% group_by(DIST_NAME) %>% 
+  summarize(meanbwobs = mean(c_weight, na.rm=T))
+dist@data<-dist@data %>% right_join(new2, by= c("DIST_NAME"="DIST_NAME"))
+spplot(dist, "meanbwobs")
+```
+
+## using the knn
+```{r}
+dist_coords <- cbind(dist3@data$LONGNUM, dist3@data$LATNUM)
+
+# only have lat long of clusters not of districts
+dist_knn<- knearneigh(na.omit(dist_coords), k=2, longlat = TRUE)  
+```
 
